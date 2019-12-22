@@ -1,6 +1,6 @@
 # Description
 
-This is a smart-contract for TON blockchain implementing service for managing cheques made by Dmitry Churkin . Cheques service provides a way for users to create a cheque for specific amount of Grams with associated key.  It was made as a part of Telegram contest.
+This is a smart-contract for TON blockchain implementing service for managing cheques made by CAT. Cheques service provides a way for users to create a cheque for specific amount of Grams with associated key. It was made as a part of Telegram contest.
 
 Assume Alice is the person who keeps Grams.
 
