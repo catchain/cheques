@@ -1,0 +1,46 @@
+// create a message
+
+"TonUtil.fif" include
+
+true constant bounce
+true constant dest-bounce
+
+
+
+{ ."usage: " @' $0 type ." <cheque-service-address> <dest-address> <seqno> <cheque-key> [<savefile>]" cr
+  ."Creates the message to activate cheque stored in target cheque service and send grams to dest addr" cr
+  ."The result is saved into <savefile> (`activate-cheque-query.boc` by default)." cr
+  ."MESSAGE SENT AFTER CHEQUE ACTIVATION IS NON-BOUNCEABLE SO CHECK DESTINATION ADDRESS TWICE" cr
+  1 halt
+} : usage
+
+
+$# dup 4 < swap 5 > or ' usage if
+
+
+$1 bounce parse-load-address =: bounce 2=: wallet_addr
+$2 dest-bounce parse-load-address =: dest-bounce 2=: dest-addr
+$3 parse-int =: seqno
+$4 parse-int =: cheque-passcode
+
+def? $5 { @' $5 } { "activate-cheque-query" } cond constant savefile
+
+
+<b b> =: body-cell
+"1" $>GR =: amount
+<b b{01} s, false 1 i, b{000100} s, dest-addr addr, amount Gram, 0 9 64 32 + + 1+ u, -1 1 i, b> =: formedmsg
+
+<b b{1000100} s, wallet_addr addr, 0 Gram, b{00} s,
+	seqno 32 u,
+	dest-addr addr,
+	cheque-passcode 256 u,
+
+b> =: ms
+ms dup ."resulting external message: " <s csr. cr
+."Passcode hash " <b cheque-passcode 256 u, b> hashu <b swap 256 u, b> <s csr. cr
+2 boc+>B dup Bx. cr
+savefile +".boc" tuck B>file
+."(Saved to file " type .")" cr
+
+
+cr ."MESSAGE SENT AFTER CHEQUE ACTIVATION IS NON-BOUNCEABLE SO CHECK DESTINATION ADDRESS TWICE" cr

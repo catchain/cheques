@@ -1,0 +1,5 @@
+"TonUtil.fif" include
+$1 parse-int =: hex
+
+<b hex 256 u, b> hashu
+<b swap 256 u, b> <s csr.

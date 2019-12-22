@@ -1,0 +1,198 @@
+;;	Cheque storage smart contract
+;;	data = {
+;;		init: int1
+;;		seqno: uint32
+;;		public_key: uint256
+;;		cheques: dict { 
+;;			hash: uint256 -> slice { grams: Grams } 
+;;		}
+;;	}
+
+ 
+(int, int, int, cell) load_data() inline {
+	var ds = get_data().begin_parse();
+	var res = (
+		ds~load_int(1),
+		ds~load_uint(32), 	;; SEQNO : uint32
+		ds~load_uint(256), 	;; PUBK  : uint256
+		ds~load_dict()		;; CHEQUES: dict ( cheque_hash:uint256 => slice(grams:GR, body:ref))
+	);
+	;; ds.end_parse();
+	return res;
+}
+
+() store_data(init, seqno, pubk, cheques) impure {
+	var c = begin_cell()
+		.store_int(init, 1)
+		.store_uint(seqno, 32)
+		.store_uint(pubk, 256)
+		.store_dict(cheques)
+		.end_cell();
+
+	set_data(c);
+}
+
+() send_message_back(addr, ans_tag, query_id, body, grams, mode) impure {
+  ;; int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddress -> 011000
+  var msg = begin_cell()
+    .store_uint(0x18, 6)
+    .store_slice(addr)
+    .store_grams(grams)
+    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+    .store_uint(ans_tag, 32)
+    .store_uint(query_id, 64);
+  if (body >= 0) {
+    msg~store_uint(body, 32);
+  }
+  send_raw_message(msg.end_cell(), mode);
+}
+
+;;====================== INTERNAL MESSAGES PROCESSING =================
+
+
+() process_cheque_creation(int msg_value, slice msg_cell, slice s_addr, int query_id ) impure {
+	int gas_fee = 55000000; ;; 0.05 gr. GASTOGRAM opcode should be used, but it is unsupported now.
+	int success_gas_fee = 150000000; ;; ~ 0.075 (cheque-creation) + ~ 0.075 (cheque-activation)
+	int minimal_value_to_return = 100000000;
+
+	int hash = msg_cell~load_uint(256);
+	var grams = msg_cell~load_grams();
+
+	var (init, seqno, pubk, cheques) = load_data();
+
+	throw_if(37, msg_value - grams < success_gas_fee);
+
+	set_gas_limit(msg_value - grams);
+
+
+	raw_reserve(msg_value, 3); ;; prevent using grams from another cheques
+	
+	var (cheque_slice, found) = cheques.udict_get?(256, hash);
+
+	;; Add grams to cheque if id is exists
+	if ( found ) {
+
+		var cheque_balance = cheque_slice~load_grams();
+		cheques~udict_set_builder(256, hash, begin_cell().store_grams(cheque_balance + grams));
+
+	}
+	else
+	{
+		cheques~udict_set_builder(256, hash, begin_cell()
+			.store_grams(grams)
+		);
+	}
+
+	store_data(init, seqno, pubk, cheques);
+
+	if ( msg_value - grams - success_gas_fee > minimal_value_to_return )
+	{
+		send_message_back(s_addr, 0x0374484c, query_id, 0, msg_value - grams - success_gas_fee, 2);
+	}
+}
+
+() recv_internal(int msg_value, cell in_msg_cell, slice in_msg) impure {
+  var cs = in_msg_cell.begin_parse();
+  var flags = cs~load_uint(4);  ;; int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
+  if (flags & 1) {
+    ;; ignore all bounced messages
+    return ();
+  }
+
+  var s_addr = cs~load_msg_addr();
+
+  if (in_msg.slice_empty?()) {
+    ;; just accept incoming funds
+    return ();
+  }
+
+  var op = in_msg~load_uint(32);
+  int query_id = in_msg~load_uint(64);
+
+  if ( op == 0x0001a0f1 )
+  {
+  	return process_cheque_creation(msg_value, in_msg, s_addr, query_id);
+  }
+  if ( op == 0 )
+  {
+  	;; just accept funds
+  	return ();
+  }
+
+  ifnot (op & (1 << 31)) {
+    ;; unknown query, return error
+    return send_message_back(s_addr, 0xffffffff, query_id, op, 0, 64);
+  }
+
+}
+
+;; ================== EXTERNAL MESSAGES PROCESSING ================
+
+() recv_external(slice in_msg) impure {
+
+ 	var (init, seqno, public_key, cheques) = load_data();
+
+	if ( ~ init )
+	{		
+		var signature = in_msg~load_bits(512);
+		var cs = in_msg;
+  		var msg_seqno = cs~load_uint(32);
+
+		throw_unless(33, msg_seqno == seqno );
+		throw_unless(35, check_signature(slice_hash(in_msg), signature, public_key));
+
+		accept_message();
+
+		store_data(-1, seqno + 1, public_key, cheques);
+		return ();
+	}
+
+
+  	var cs = in_msg;
+  	var msg_seqno = cs~load_uint(32);
+  	throw_unless(33, msg_seqno == seqno );
+
+	accept_message();
+
+	var wc = cs~load_int(8);
+	var addr = cs~load_uint(256);
+
+  	var cheque_passcode = cs;
+	var hash = slice_hash(cheque_passcode);
+
+  	var (cheque_msg, found) = cheques.udict_get?(256, hash);
+  	throw_unless(36, found);
+  	var (grams) = (cheque_msg~load_grams());
+
+
+  	var msg = begin_cell()
+  		.store_uint(0x84, 9)
+  		.store_int(wc, 8)
+  		.store_uint(addr, 256)
+  		.store_grams(grams) 
+  		.store_uint(0, 106 + 1 + 32)
+  		.end_cell();
+
+  	cheques~udict_delete?(256, hash);
+
+  	accept_message();
+
+  	store_data(init, seqno + 1, public_key, cheques);
+
+  	send_raw_message(msg, 3); ;; cheque creator already payed fees for cheque activation
+}
+;; ====================== RUNMETHOD ===================
+
+(int) get_cheque_balance(int hash) method_id {
+	var (init, seqno, public_key, cheques) = load_data();
+	var (cheque, found) = cheques.udict_get?(256, hash);
+
+	ifnot ( found ) { return -1; }
+
+	return cheque~load_grams();
+}
+
+(int) seqno() method_id {
+	var (init, seqno, _, _ ) = load_data();
+	return seqno;
+}
