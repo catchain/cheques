@@ -11,7 +11,7 @@ This wallet smartcontract can send multiple transactions with one external messa
 
 - `multisend-code.fc.fif`
 
-  A compiled version of ``multisend-code.fc` `
+  A compiled version of `multisend-code.fc` 
 
 - `multisend.fif`
   A script to create boc file containing several transactions to be sent
