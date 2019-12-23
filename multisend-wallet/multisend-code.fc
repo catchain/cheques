@@ -1,0 +1,60 @@
+;; Multisend wallet smart contract
+
+() recv_internal(slice in_msg) impure {
+  ;; do nothing for internal messages
+}
+
+
+;;  in_msg: slice {
+;;    signature: slice512,
+;;    valid_until: uint32,
+;;    seqno: uint32,
+;;    transactions = dict {
+;;      idx => slice {
+;;        mode(1): uint32,
+;;        ref(1): ref,
+;;        ...
+;;        mode(n): uint32,
+;;        ref(n): ref
+;;      }
+;;    }
+;;  }
+() recv_external(slice in_msg) impure {
+  var signature = in_msg~load_bits(512);
+  var cs = in_msg;
+  var (valid_until, msg_seqno) = (cs~load_uint(32), cs~load_uint(32));
+  var out_transactions = cs~load_dict();
+
+  throw_if(35, valid_until <= now());
+  var ds = get_data().begin_parse();
+  var (stored_seqno, public_key) = (ds~load_uint(32), ds~load_uint(256));
+  ds.end_parse();
+  throw_unless(33, msg_seqno == stored_seqno);
+  throw_unless(35, check_signature(slice_hash(in_msg), signature, public_key));
+
+  accept_message();
+  cs~touch();
+
+  ;; Process requested transactions
+  int idx = -1;
+  do {
+    (idx, slice tx_data, int found) = out_transactions.udict_get_next?(32, idx);
+    if ( found ) {
+      while (tx_data.slice_refs()) {
+        var mode = tx_data~load_uint(8);
+        send_raw_message(tx_data~load_ref(), mode);
+      }
+    }
+  } until ( ~ found );
+
+  set_data(begin_cell()
+    .store_uint(stored_seqno + 1, 32)
+    .store_uint(public_key, 256)
+    .end_cell());
+}
+
+;; Get methods
+
+int seqno() method_id {
+  return get_data().begin_parse().preload_uint(32);
+}

@@ -1,0 +1,119 @@
+"TonUtil.fif" include
+
+true constant bounce
+3 constant send-mode  // mode for SENDRAWMSG: +1 - sender pays fees, +2 - ignore errors
+360 constant timeout
+
+
+
+{ ."usage: " @' $0 type ." <wallet-filebase> <seqno> <savefile> <addr[1]> <amount[1]> [-B <attachment[1]] ... <addr[n]> <amount[n]> [-B <attachment[n]]" cr
+  ."Creates a request to multisend wallet created with new-multisend-wallet.fif with private key loaded from <wallet-filebase>.pk and address from <wallet-filebase>.addr and saves it into <savefile>.boc " cr
+  1 halt
+} : usage
+
+$# 3 < ' usage if
+
+
+$1 =: file-base
+$2 parse-int =: seqno
+$3 =: savefile
+$# =: total-arg-count
+
+variable idx
+variable amount
+variable dest_addr
+variable dest_addr2
+variable attachment
+variable k
+0 k !
+
+{ idx @ } : @idx
+{ idx @ . } : .@idx
+{ idx @ total-arg-count > { ."Invalid argument count" cr usage } if } : check-idx
+
+
+variable _transactions 
+dictnew _transactions !
+{ _transactions ! } : =:transactions
+{ _transactions @ } : transactions
+
+variable body-cell
+variable msg
+
+variable msg-cell-builder
+variable refs-count 
+variable should-bounce
+0 refs-count !
+<b msg-cell-builder !
+
+4 idx !
+// parse all remaining args to tuples [wallet, amount, attachment?] and save to msg-cell-builder
+{
+	null attachment !
+	<b b> body-cell !
+
+
+
+	idx @ $() bounce parse-load-address should-bounce ! dest_addr ! dest_addr2 !
+	idx @ 1 + idx !
+	check-idx
+	idx @ $() $>GR amount !
+	idx @ 1 + total-arg-count > {
+		idx @ 1 + $() "-B" $= {
+			idx @ 2 + idx ! check-idx
+			idx @ $() attachment !
+		} if
+	} ifnot
+
+	attachment @ null? {
+		attachment @ file>B B>boc body-cell !
+
+	} ifnot
+	cr
+
+	<b b{01} s, should-bounce @ 1 i, b{000100} s, dest_addr2 @ dest_addr @ addr, amount @ Gram, 0 9 64 32 + + 1+ u, 
+		body-cell @ <s 2dup s-fits? not rot over 1 i, -rot { drop body-cell @ ref, } { s, } cond
+	b> msg !
+	msg @ <s csr. cr
+
+	msg-cell-builder @ send-mode 8 u, msg @ ref, msg-cell-builder !
+	refs-count @ 1 + refs-count !
+
+	refs-count @ 4 >= {
+		msg-cell-builder @ k @ 1 + transactions 32 b>udict! drop =:transactions
+		0 refs-count !
+		<b msg-cell-builder !
+		k @ 1 + k !
+
+	} if
+
+	idx @ 1 + idx !
+	idx @ total-arg-count >
+
+} until
+
+refs-count @ 0 >= {
+		msg-cell-builder @ k @ 1 + transactions 32 b>udict! drop =:transactions
+		0 refs-count !
+		<b msg-cell-builder !
+		k @ 1 + k !
+	} if
+
+file-base +".addr" load-address
+2dup 2constant wallet_addr
+."Source wallet address = " 2dup .addr cr 6 .Addr cr
+file-base +".pk" load-keypair nip constant wallet_pk
+
+<b now timeout + 32 u, seqno 32 u, transactions dict, b>
+dup ."signing message: " <s csr. cr
+dup hashu wallet_pk ed25519_sign_uint
+<b b{1000100} s, wallet_addr addr, 0 Gram, b{00} s,
+   swap B, swap <s s, b>
+dup ."resulting external message: " <s csr. cr
+2 boc+>B dup Bx. cr
+savefile +".boc" tuck B>file
+."Query expires in " timeout . ."seconds" cr
+."(Saved to file " type .")" cr
+
+
+1 transactions 32 udict@ .s 8
