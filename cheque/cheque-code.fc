@@ -4,7 +4,7 @@
 ;;		seqno: uint32
 ;;		public_key: uint256
 ;;		cheques: dict { 
-;;			hash: uint256 -> slice { grams: Grams } 
+;;			cheque_id: uint256 -> slice { grams: Grams } 
 ;;		}
 ;;	}
 
@@ -55,7 +55,7 @@
 	int success_gas_fee = 150000000; ;; ~ 0.075 (cheque-creation) + ~ 0.075 (cheque-activation)
 	int minimal_value_to_return = 100000000;
 
-	int hash = msg_cell~load_uint(256);
+	int cheque_id = msg_cell~load_uint(256);
 	var grams = msg_cell~load_grams();
 
 	var (init, seqno, pubk, cheques) = load_data();
@@ -63,22 +63,20 @@
 	throw_if(37, msg_value - grams < success_gas_fee);
 
 	set_gas_limit(msg_value - grams);
-
-
 	raw_reserve(msg_value, 3); ;; prevent using grams from another cheques
 	
-	var (cheque_slice, found) = cheques.udict_get?(256, hash);
+	var (cheque_slice, found) = cheques.udict_get?(256, cheque_id);
 
 	;; Add grams to cheque if id is exists
 	if ( found ) {
 
 		var cheque_balance = cheque_slice~load_grams();
-		cheques~udict_set_builder(256, hash, begin_cell().store_grams(cheque_balance + grams));
+		cheques~udict_set_builder(256, cheque_id, begin_cell().store_grams(cheque_balance + grams));
 
 	}
 	else
 	{
-		cheques~udict_set_builder(256, hash, begin_cell()
+		cheques~udict_set_builder(256, cheque_id, begin_cell()
 			.store_grams(grams)
 		);
 	}
@@ -132,13 +130,13 @@
 
  	var (init, seqno, public_key, cheques) = load_data();
 
-	if ( ~ init )
-	{		
-		var signature = in_msg~load_bits(512);
-		var cs = in_msg;
-  		var msg_seqno = cs~load_uint(32);
+ 	var signature = in_msg~load_bits(512);
+	var cs = in_msg;
+	var msg_seqno = cs~load_uint(32);
 
-		throw_unless(33, msg_seqno == seqno );
+	throw_unless(33, msg_seqno == seqno );
+	if ( ~ init )
+	{
 		throw_unless(35, check_signature(slice_hash(in_msg), signature, public_key));
 
 		accept_message();
@@ -146,24 +144,18 @@
 		store_data(-1, seqno + 1, public_key, cheques);
 		return ();
 	}
+	var cheque_activation_info = cs~load_ref().begin_parse();
 
+	var wc = cheque_activation_info~load_int(8);	
+	var addr = cheque_activation_info~load_uint(256);
+	var cheque_id = cheque_activation_info~load_uint(256);
 
-  	var cs = in_msg;
-  	var msg_seqno = cs~load_uint(32);
-  	throw_unless(33, msg_seqno == seqno );
+  	var (cheque_msg, found) = cheques.udict_get?(256, cheque_id);
 
-	accept_message();
+  	throw_unless(36, found);  	
+	throw_unless(37, check_signature(slice_hash(in_msg), signature, cheque_id));
 
-	var wc = cs~load_int(8);
-	var addr = cs~load_uint(256);
-
-  	var cheque_passcode = cs;
-	var hash = slice_hash(cheque_passcode);
-
-  	var (cheque_msg, found) = cheques.udict_get?(256, hash);
-  	throw_unless(36, found);
   	var (grams) = (cheque_msg~load_grams());
-
 
   	var msg = begin_cell()
   		.store_uint(0x84, 9)
@@ -173,19 +165,18 @@
   		.store_uint(0, 106 + 1 + 32)
   		.end_cell();
 
-  	cheques~udict_delete?(256, hash);
+  	cheques~udict_delete?(256, cheque_id);
 
   	accept_message();
 
   	store_data(init, seqno + 1, public_key, cheques);
-
   	send_raw_message(msg, 3); ;; cheque creator already payed fees for cheque activation
 }
 ;; ====================== RUNMETHOD ===================
 
-(int) get_cheque_balance(int hash) method_id {
+(int) get_cheque_balance(int cheque_id) method_id {
 	var (init, seqno, public_key, cheques) = load_data();
-	var (cheque, found) = cheques.udict_get?(256, hash);
+	var (cheque, found) = cheques.udict_get?(256, cheque_id);
 
 	ifnot ( found ) { return -1; }
 

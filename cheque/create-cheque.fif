@@ -1,24 +1,39 @@
 #!/usr/bin/fift -s
 "TonUtil.fif" include
 
-{ ."usage: " @' $0 type ." <hash> <grams> [<savefile>]" cr
-  ."Creates the message body to be sent from wallet to create cheque identified by given hash and storing specified amount of Grams" cr
+{ ."usage: " @' $0 type ." <grams> [-K <id>] [<savefile>]" cr
+  ."Creates the message body to be sent from wallet to create cheque identified by given or random id(public key) and storing specified amount of Grams" cr
   ."The result is saved into <savefile> (`create-cheque-query.boc` by default) and output in hexadecimal form, to be sent later as the body of a message from the wallet to cheque service smartcontract, along with cheque value and fees(0.15 GR)" cr 1 halt
 } : usage
 
-$# dup 2 < swap 3 > or ' usage if
-$1 parse-int =: cheque_hash
-$2 $>GR =: grams
+def? $3 { @' $2 "-K" $= { @' $3 =: key [forget] $3 def? $4 { @' $4 =: $2 [forget] $4 } { [forget] $2 } cond
+  @' $# 2- =: $# } if } if
+
+$# dup 1 < swap 3 > or ' usage if
+$1 $>GR =: grams
+def? $2 { @' $2 } { "create-cheque-query.boc" } cond constant output_fname
+
+def? key {
+	<b @' key parse-int 256 u, b> <s 32 B@ =: bkey
+	."Got cheque id: " @' bkey Bx. cr
+	@' bkey
+} {
+	newkeypair
+	dup ."Generated cheque with id: " Bx. cr
+	swap ."Passcode for cheque: " B>base64url type cr
+} cond constant cheque_id
+
+cheque_id Blen 32 = not { ."Invalid id length. Should be 32 byte id." cr 1 halt } if
 
 now constant query_id
+newkeypair =: id =: key
 ."query_id for cheque creation message is set to " query_id . cr
 
 cr ."Cheque value is: " grams .GR
 cr ."Minimal value to send: " grams 150000000 + .GR 
 
-def? $3 { @' $3 } { "create-cheque-query.boc" } cond constant output_fname
 
-<b 0x0001a0f1 32 u, query_id 64 u, cheque_hash 256 u, grams Gram, b> dup =: ms
+<b 0x0001a0f1 32 u, query_id 64 u, cheque_id B, grams Gram, b> dup =: ms
 cr ."Message body is " dup <s csr. cr
 
 2 boc+>B output_fname tuck B>file ."Saved to file " type cr

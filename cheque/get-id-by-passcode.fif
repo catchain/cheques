@@ -1,0 +1,4 @@
+"TonUtil.fif" include
+$1 base64url>B =: pk
+
+pk priv>pub Bx. cr

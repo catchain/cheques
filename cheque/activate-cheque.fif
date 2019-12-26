@@ -21,7 +21,7 @@ $# dup 4 < swap 5 > or ' usage if
 $1 bounce parse-load-address =: bounce 2=: wallet_addr
 $2 dest-bounce parse-load-address =: dest-bounce 2=: dest-addr
 $3 parse-int =: seqno
-$4 parse-int =: cheque-passcode
+$4 base64url>B =: cheque-pk
 
 def? $5 { @' $5 } { "activate-cheque-query" } cond constant savefile
 
@@ -30,14 +30,14 @@ def? $5 { @' $5 } { "activate-cheque-query" } cond constant savefile
 "1" $>GR =: amount
 <b b{01} s, false 1 i, b{000100} s, dest-addr addr, amount Gram, 0 9 64 32 + + 1+ u, -1 1 i, b> =: formedmsg
 
+<b seqno 32 u, <b dest-addr addr, cheque-pk priv>pub B, b> ref, b> =: cs
+cs hashu cheque-pk ed25519_sign_uint =: signature
 <b b{1000100} s, wallet_addr addr, 0 Gram, b{00} s,
-	seqno 32 u,
-	dest-addr addr,
-	cheque-passcode 256 u,
-
+	signature B,
+	cs <s s,
 b> =: ms
 ms dup ."resulting external message: " <s csr. cr
-."Passcode hash " <b cheque-passcode 256 u, b> hashu <b swap 256 u, b> <s csr. cr
+."Cheque id " cheque-pk Bx. cr cr
 2 boc+>B dup Bx. cr
 savefile +".boc" tuck B>file
 ."(Saved to file " type .")" cr
